@@ -1,0 +1,6 @@
+@MEAIPDFTool.Server_HostAddress = http://localhost:5173
+
+GET {{MEAIPDFTool.Server_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
