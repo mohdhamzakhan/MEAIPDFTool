@@ -533,19 +533,16 @@ public class PdfController : ControllerBase
     [HttpGet("download/{filename}")]
     public IActionResult DownloadFile(string filename)
     {
+        filename = Path.GetFileName(filename);
         var filePath = Path.Combine(_environment.WebRootPath, "temp", filename);
 
         if (!System.IO.File.Exists(filePath))
             return NotFound();
 
-        var memory = new MemoryStream();
-        using (var stream = new FileStream(filePath, FileMode.Open))
-        {
-            stream.CopyTo(memory);
-        }
-        memory.Position = 0;
+        new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider()
+            .TryGetContentType(filename, out var contentType);
 
-        return File(memory, "application/pdf", filename);
+        return PhysicalFile(filePath, contentType ?? "application/octet-stream", filename);
     }
 
     [HttpPost("translate")]
@@ -603,6 +600,62 @@ public class PdfController : ControllerBase
         catch (Exception ex)
         {
             return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+
+    [HttpPost("translate-file")]
+    [Consumes("multipart/form-data")]
+    public async Task<IActionResult> TranslatePdfFile([FromForm] TranslatePdfRequest request)
+    {
+        try
+        {
+            if (request.file == null)
+                return BadRequest(new PdfOperationResponse { Success = false, Message = "File is required" });
+
+            var translationService = HttpContext.RequestServices.GetRequiredService<ITranslationService>();
+
+            byte[] bytes;
+            string ext;
+            try
+            {
+                // Try the PDF directly
+                await using var pdfStream = request.file.OpenReadStream();
+                (bytes, ext) = await translationService.TranslateFileAsync(
+                    pdfStream, request.file.FileName, request.sourceLang, request.targetLang);
+            }
+            catch (InvalidOperationException)
+            {
+                // Fallback: PDF -> Word (your existing converter), then translate the .docx
+                var docxName = $"converted_{Guid.NewGuid()}.docx";
+                var docxPath = Path.Combine(_environment.WebRootPath, "temp", docxName);
+                await _conversionService.ConvertPdfToWordAsync(request.file, docxPath);
+
+                try
+                {
+                    await using var docxStream = System.IO.File.OpenRead(docxPath);
+                    (bytes, ext) = await translationService.TranslateFileAsync(
+                        docxStream, docxName, request.sourceLang, request.targetLang);
+                }
+                finally { System.IO.File.Delete(docxPath); }
+            }
+
+            if (string.IsNullOrEmpty(ext)) ext = ".pdf";
+            var outputFileName = $"translated_{Guid.NewGuid()}{ext}";
+            var outputPath = Path.Combine(_environment.WebRootPath, "temp", outputFileName);
+            await System.IO.File.WriteAllBytesAsync(outputPath, bytes);
+
+            return Ok(new PdfOperationResponse
+            {
+                Success = true,
+                Message = "File translated successfully",
+                FileName = outputFileName,
+                FilePath = $"/temp/{outputFileName}"
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new PdfOperationResponse { Success = false, Message = ex.Message });
         }
     }
 

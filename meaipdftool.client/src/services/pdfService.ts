@@ -168,17 +168,15 @@ export const pdfService = {
     translatePdf: async (
         file: File,
         sourceLang: string = 'en',
-        targetLang: string = 'es' // Change default as needed
-    ): Promise<PdfOperationResponse & { originalText?: string, translatedText?: string }> => {
+        targetLang: string = 'es'
+    ): Promise<PdfOperationResponse & { originalText?: string; translatedText?: string }> => {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('sourceLang', sourceLang);
         formData.append('targetLang', targetLang);
-
         const response = await axios.post(`${API_BASE_URL}/translate`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
         });
-
         return response.data;
     },
 
@@ -250,4 +248,5 @@ export const pdfService = {
     downloadFile: (fileName:string) =>{
         window.open(`${API_BASE_URL}/download/${encodeURIComponent(fileName)}`, '_blank');
     }
+
 }

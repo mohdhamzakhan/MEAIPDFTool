@@ -10,11 +10,12 @@ namespace MEAIPDFTool.Server.Services
         private readonly HttpClient _httpClient;
         private Dictionary<string, string> _protectedContent = new Dictionary<string, string>();
         private readonly TerminologyDictionary _terminology;
+        private const string BaseUrl = "http://10.235.20.49:8979";
 
         public TranslationService(HttpClient httpClient, IWebHostEnvironment environment)
         {
             _httpClient = httpClient;
-            _httpClient.Timeout = TimeSpan.FromSeconds(30); // ✅ Set once here
+            _httpClient.Timeout = TimeSpan.FromSeconds(300); // ✅ Set once here
             var path = Path.Combine(
             environment.ContentRootPath,
             "terminology.json");
@@ -164,6 +165,36 @@ namespace MEAIPDFTool.Server.Services
                 : result;
         }
 
+        public async Task<(byte[] Content, string Extension)> TranslateFileAsync(
+    Stream fileStream, string fileName, string sourceLang, string targetLang,
+    CancellationToken ct = default)
+        {
+            using var form = new MultipartFormDataContent();
+
+            var fileContent = new StreamContent(fileStream);
+            fileContent.Headers.ContentType =
+                new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            form.Add(fileContent, "file", fileName);
+            form.Add(new StringContent(string.IsNullOrWhiteSpace(sourceLang) ? "auto" : sourceLang.ToLowerInvariant()), "source");
+            form.Add(new StringContent(targetLang.ToLowerInvariant()), "target");
+            form.Add(new StringContent(""), "api_key");   // same as your text calls; put the real key here if you enable one
+
+            var response = await _httpClient.PostAsync($"{BaseUrl}/translate_file", form, ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"LibreTranslate file translation failed ({(int)response.StatusCode}): {body}");
+
+            // Response: { "translatedFileUrl": "http://.../download_file/xxxx.ext" }
+            using var json = JsonDocument.Parse(body);
+            var url = json.RootElement.GetProperty("translatedFileUrl").GetString()!;
+
+            // Rebuild the URL on our known base, in case LibreTranslate reports an internal host name
+            var path = Uri.TryCreate(url, UriKind.Absolute, out var abs) ? abs.AbsolutePath : url;
+            var bytes = await _httpClient.GetByteArrayAsync($"{BaseUrl}{path}", ct);
+
+            return (bytes, Path.GetExtension(path));
+        }
+
         private async Task<string> TranslateSingleAsync(string text, string sourceLang, string targetLang)
         {
             var processedText = ProtectContent(text);
@@ -184,8 +215,8 @@ namespace MEAIPDFTool.Server.Services
                 "application/json"
             );
 
-            //_httpClient.Timeout = TimeSpan.FromSeconds(30);
-            var response = await _httpClient.PostAsync("http://10.235.20.49:8979/translate", content);
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var response = await _httpClient.PostAsync($"{BaseUrl}/translate", content, cts.Token);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadAsStringAsync();

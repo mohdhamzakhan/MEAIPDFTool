@@ -20,6 +20,42 @@ interface TranslatorProps {
     libreTranslateUrl?: string;
 }
 
+type PdfOutput = 'file' | 'text';
+
+// Shared styles
+const labelStyle: React.CSSProperties = {
+    display: 'block',
+    marginBottom: '12px',
+    fontWeight: '500',
+    color: '#4b5563',
+    fontSize: '13px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+};
+
+const selectStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '14px 16px',
+    border: '1px solid #e5e7eb',
+    borderRadius: '10px',
+    fontSize: '15px',
+    fontWeight: '400',
+    cursor: 'pointer',
+    outline: 'none',
+    backgroundColor: '#fafbfc',
+    transition: 'all 0.2s ease',
+    color: '#1a1a1a',
+};
+
+const focusIn = (e: React.FocusEvent<HTMLElement>) => {
+    e.target.style.borderColor = '#1a1a1a';
+    e.target.style.backgroundColor = 'white';
+};
+const focusOut = (e: React.FocusEvent<HTMLElement>) => {
+    e.target.style.borderColor = '#e5e7eb';
+    e.target.style.backgroundColor = '#fafbfc';
+};
+
 export default function Translator({
     apiBaseUrl = 'https://10.235.20.49:8978',
     libreTranslateUrl = 'https://10.235.20.49:8979'
@@ -34,6 +70,7 @@ export default function Translator({
     const [error, setError] = useState('');
     const [languages, setLanguages] = useState<Language[]>([]);
     const [availableTargets, setAvailableTargets] = useState<string[]>([]);
+    const [pdfOutput, setPdfOutput] = useState<PdfOutput>('file');
 
     useEffect(() => {
         fetchLanguages();
@@ -87,9 +124,7 @@ export default function Translator({
         try {
             const response = await fetch(`${apiBaseUrl}/api/pdf/text`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     text: textInput,
                     sourceLang: sourceLang,
@@ -130,17 +165,19 @@ export default function Translator({
         formData.append('sourceLang', sourceLang);
         formData.append('targetLang', targetLang);
 
+        const endpoint = pdfOutput === 'file' ? 'translate-file' : 'translate';
+
         try {
-            const response = await fetch(`${apiBaseUrl}/api/pdf/translate`, {
+            const response = await fetch(`${apiBaseUrl}/api/pdf/${endpoint}`, {
                 method: 'POST',
                 body: formData,
             });
 
-            if (!response.ok) {
-                throw new Error('Translation failed');
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data?.success) {
+                throw new Error(data?.message || 'Translation failed');
             }
 
-            const data = await response.json();
             setResult({
                 success: data.success,
                 message: data.message,
@@ -156,9 +193,26 @@ export default function Translator({
         }
     };
 
-    const handleDownload = () => {
-        if (result?.fileName) {
-            window.open(`${apiBaseUrl}/api/pdf/download/${result.fileName}`, '_blank');
+    const handleDownload = async () => {
+        console.log(result)
+        if (!result?.fileName) return;
+        try {
+            const res = await fetch(`${apiBaseUrl}/api/pdf/download/${encodeURIComponent(result.fileName)}`);
+            if (!res.ok) {
+                setError(`Download failed (${res.status}) for ${result.fileName}`);
+                return;
+            }
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = result.fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (err: any) {
+            setError('Download failed: ' + (err.message || 'network error'));
         }
     };
 
@@ -166,6 +220,22 @@ export default function Translator({
         const lang = languages.find(l => l.code === code);
         return lang?.name || code.toUpperCase();
     };
+
+    const pdfButtonLabel = loading
+        ? (pdfOutput === 'file' ? 'Translating file… this may take a few minutes' : 'Translating...')
+        : (pdfOutput === 'file' ? 'Translate PDF to File' : 'Translate PDF');
+
+    const modeButtonStyle = (active: boolean): React.CSSProperties => ({
+        padding: '10px 28px',
+        backgroundColor: active ? '#1a1a1a' : 'transparent',
+        color: active ? 'white' : '#6b7280',
+        border: 'none',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: '500',
+        transition: 'all 0.2s ease',
+    });
 
     return (
         <div style={{
@@ -205,42 +275,14 @@ export default function Translator({
                     boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
                 }}>
                     <button
-                        onClick={() => {
-                            setMode('text');
-                            setError('');
-                            setResult(null);
-                        }}
-                        style={{
-                            padding: '10px 28px',
-                            backgroundColor: mode === 'text' ? '#1a1a1a' : 'transparent',
-                            color: mode === 'text' ? 'white' : '#6b7280',
-                            border: 'none',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            transition: 'all 0.2s ease',
-                        }}
+                        onClick={() => { setMode('text'); setError(''); setResult(null); }}
+                        style={modeButtonStyle(mode === 'text')}
                     >
                         Text
                     </button>
                     <button
-                        onClick={() => {
-                            setMode('pdf');
-                            setError('');
-                            setResult(null);
-                        }}
-                        style={{
-                            padding: '10px 28px',
-                            backgroundColor: mode === 'pdf' ? '#1a1a1a' : 'transparent',
-                            color: mode === 'pdf' ? 'white' : '#6b7280',
-                            border: 'none',
-                            borderRadius: '8px',
-                            cursor: 'pointer',
-                            fontSize: '14px',
-                            fontWeight: '500',
-                            transition: 'all 0.2s ease',
-                        }}
+                        onClick={() => { setMode('pdf'); setError(''); setResult(null); }}
+                        style={modeButtonStyle(mode === 'pdf')}
                     >
                         PDF
                     </button>
@@ -262,41 +304,13 @@ export default function Translator({
                         alignItems: 'end'
                     }}>
                         <div>
-                            <label style={{
-                                display: 'block',
-                                marginBottom: '12px',
-                                fontWeight: '500',
-                                color: '#4b5563',
-                                fontSize: '13px',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.5px'
-                            }}>
-                                From
-                            </label>
+                            <label style={labelStyle}>From</label>
                             <select
                                 value={sourceLang}
                                 onChange={(e) => setSourceLang(e.target.value)}
-                                style={{
-                                    width: '100%',
-                                    padding: '14px 16px',
-                                    border: '1px solid #e5e7eb',
-                                    borderRadius: '10px',
-                                    fontSize: '15px',
-                                    fontWeight: '400',
-                                    cursor: 'pointer',
-                                    outline: 'none',
-                                    backgroundColor: '#fafbfc',
-                                    transition: 'all 0.2s ease',
-                                    color: '#1a1a1a'
-                                }}
-                                onFocus={(e) => {
-                                    e.target.style.borderColor = '#1a1a1a';
-                                    e.target.style.backgroundColor = 'white';
-                                }}
-                                onBlur={(e) => {
-                                    e.target.style.borderColor = '#e5e7eb';
-                                    e.target.style.backgroundColor = '#fafbfc';
-                                }}
+                                style={selectStyle}
+                                onFocus={focusIn}
+                                onBlur={focusOut}
                             >
                                 {languages.map(lang => (
                                     <option key={lang.code} value={lang.code}>
@@ -344,41 +358,13 @@ export default function Translator({
                         </div>
 
                         <div>
-                            <label style={{
-                                display: 'block',
-                                marginBottom: '12px',
-                                fontWeight: '500',
-                                color: '#4b5563',
-                                fontSize: '13px',
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.5px'
-                            }}>
-                                To
-                            </label>
+                            <label style={labelStyle}>To</label>
                             <select
                                 value={targetLang}
                                 onChange={(e) => setTargetLang(e.target.value)}
-                                style={{
-                                    width: '100%',
-                                    padding: '14px 16px',
-                                    border: '1px solid #e5e7eb',
-                                    borderRadius: '10px',
-                                    fontSize: '15px',
-                                    fontWeight: '400',
-                                    cursor: 'pointer',
-                                    outline: 'none',
-                                    backgroundColor: '#fafbfc',
-                                    transition: 'all 0.2s ease',
-                                    color: '#1a1a1a'
-                                }}
-                                onFocus={(e) => {
-                                    e.target.style.borderColor = '#1a1a1a';
-                                    e.target.style.backgroundColor = 'white';
-                                }}
-                                onBlur={(e) => {
-                                    e.target.style.borderColor = '#e5e7eb';
-                                    e.target.style.backgroundColor = '#fafbfc';
-                                }}
+                                style={selectStyle}
+                                onFocus={focusIn}
+                                onBlur={focusOut}
                             >
                                 {availableTargets.map(code => (
                                     <option key={code} value={code}>
@@ -415,14 +401,8 @@ export default function Translator({
                                     lineHeight: '1.6',
                                     color: '#1a1a1a'
                                 }}
-                                onFocus={(e) => {
-                                    e.target.style.borderColor = '#1a1a1a';
-                                    e.target.style.backgroundColor = 'white';
-                                }}
-                                onBlur={(e) => {
-                                    e.target.style.borderColor = '#e5e7eb';
-                                    e.target.style.backgroundColor = '#fafbfc';
-                                }}
+                                onFocus={focusIn}
+                                onBlur={focusOut}
                             />
                             <button
                                 onClick={handleTextTranslate}
@@ -440,14 +420,10 @@ export default function Translator({
                                     transition: 'all 0.2s ease',
                                 }}
                                 onMouseEnter={(e) => {
-                                    if (!loading && textInput.trim()) {
-                                        e.currentTarget.style.background = '#2a2a2a';
-                                    }
+                                    if (!loading && textInput.trim()) e.currentTarget.style.background = '#2a2a2a';
                                 }}
                                 onMouseLeave={(e) => {
-                                    if (!loading && textInput.trim()) {
-                                        e.currentTarget.style.background = '#1a1a1a';
-                                    }
+                                    if (!loading && textInput.trim()) e.currentTarget.style.background = '#1a1a1a';
                                 }}
                             >
                                 {loading ? 'Translating...' : 'Translate'}
@@ -484,8 +460,8 @@ export default function Translator({
                                         fontWeight: '500',
                                         transition: 'all 0.2s ease',
                                     }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = '#2a2a2a'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = '#1a1a1a'}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = '#2a2a2a')}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = '#1a1a1a')}
                                 >
                                     Choose PDF File
                                 </label>
@@ -500,6 +476,36 @@ export default function Translator({
                                     </p>
                                 )}
                             </div>
+
+                            {/* Output type: translated file or text only */}
+                            <div style={{
+                                display: 'flex',
+                                gap: '8px',
+                                justifyContent: 'center',
+                                marginTop: '24px',
+                            }}>
+                                {(['file', 'text'] as const).map(opt => (
+                                    <button
+                                        key={opt}
+                                        onClick={() => { setPdfOutput(opt); setResult(null); setError(''); }}
+                                        disabled={loading}
+                                        style={{
+                                            padding: '8px 20px',
+                                            borderRadius: '8px',
+                                            border: '1px solid #e5e7eb',
+                                            cursor: loading ? 'not-allowed' : 'pointer',
+                                            fontSize: '13px',
+                                            fontWeight: 500,
+                                            backgroundColor: pdfOutput === opt ? '#1a1a1a' : 'white',
+                                            color: pdfOutput === opt ? 'white' : '#6b7280',
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                    >
+                                        {opt === 'file' ? 'Translated file' : 'Text only'}
+                                    </button>
+                                ))}
+                            </div>
+
                             <button
                                 onClick={handlePdfTranslate}
                                 disabled={loading || !file}
@@ -516,17 +522,13 @@ export default function Translator({
                                     transition: 'all 0.2s ease',
                                 }}
                                 onMouseEnter={(e) => {
-                                    if (!loading && file) {
-                                        e.currentTarget.style.background = '#2a2a2a';
-                                    }
+                                    if (!loading && file) e.currentTarget.style.background = '#2a2a2a';
                                 }}
                                 onMouseLeave={(e) => {
-                                    if (!loading && file) {
-                                        e.currentTarget.style.background = '#1a1a1a';
-                                    }
+                                    if (!loading && file) e.currentTarget.style.background = '#1a1a1a';
                                 }}
                             >
-                                {loading ? 'Translating...' : 'Translate PDF'}
+                                {pdfButtonLabel}
                             </button>
                         </div>
                     )}
@@ -576,79 +578,58 @@ export default function Translator({
                                         marginBottom: '24px',
                                         transition: 'all 0.2s ease',
                                     }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = '#2a2a2a'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = '#1a1a1a'}
+                                    onMouseEnter={(e) => (e.currentTarget.style.background = '#2a2a2a')}
+                                    onMouseLeave={(e) => (e.currentTarget.style.background = '#1a1a1a')}
                                 >
-                                    Download Translation
+                                    {pdfOutput === 'file' ? 'Download Translated File' : 'Download Translation'}
                                 </button>
                             )}
 
                             {result.translatedText && (
                                 <div style={{ marginTop: '32px' }}>
-                                    {/*<div style={{ marginBottom: '24px' }}>*/}
-                                    {/*    <div style={{*/}
-                                    {/*        padding: '12px 20px',*/}
-                                    {/*        backgroundColor: '#f9fafb',*/}
-                                    {/*        borderRadius: '10px 10px 0 0',*/}
-                                    {/*        fontWeight: '500',*/}
-                                    {/*        fontSize: '13px',*/}
-                                    {/*        color: '#6b7280',*/}
-                                    {/*        textTransform: 'uppercase',*/}
-                                    {/*        letterSpacing: '0.5px'*/}
-                                    {/*    }}>*/}
-                                    {/*        Original · {getLanguageName(sourceLang)}*/}
-                                    {/*    </div>*/}
-                                    {/*    <div style={{*/}
-                                    {/*        padding: '24px',*/}
-                                    {/*        backgroundColor: 'white',*/}
-                                    {/*        border: '1px solid #e5e7eb',*/}
-                                    {/*        borderRadius: '0 0 10px 10px',*/}
-                                    {/*        minHeight: '200px',*/}
-                                    {/*        maxHeight: '500px',*/}
-                                    {/*        overflowY: 'auto',*/}
-                                    {/*        whiteSpace: 'pre-wrap',*/}
-                                    {/*        fontSize: '15px',*/}
-                                    {/*        lineHeight: '1.7',*/}
-                                    {/*        color: '#1a1a1a'*/}
-                                    {/*    }}>*/}
-                                    {/*        {result.originalText || 'No text extracted'}*/}
-                                    {/*    </div>*/}
-                                    {/*</div>*/}
-
-                                    <div>
-                                        <div style={{
-                                            padding: '12px 20px',
-                                            backgroundColor: '#f9fafb',
-                                            borderRadius: '10px 10px 0 0',
-                                            fontWeight: '500',
-                                            fontSize: '13px',
-                                            color: '#6b7280',
-                                            textTransform: 'uppercase',
-                                            letterSpacing: '0.5px'
-                                        }}>
-                                            Translation · {getLanguageName(targetLang)}
-                                        </div>
-                                        <div style={{
-                                            padding: '24px',
-                                            backgroundColor: 'white',
-                                            border: '1px solid #e5e7eb',
-                                            borderRadius: '0 0 10px 10px',
-                                            minHeight: '200px',
-                                            maxHeight: '500px',
-                                            overflowY: 'auto',
-                                            whiteSpace: 'pre-wrap',
-                                            fontSize: '15px',
-                                            lineHeight: '1.7',
-                                            color: '#1a1a1a',
-                                            fontWeight: '400'
-                                        }}>
-                                            {result.translatedText}
-                                        </div>
+                                    <div style={{
+                                        padding: '12px 20px',
+                                        backgroundColor: '#f9fafb',
+                                        borderRadius: '10px 10px 0 0',
+                                        fontWeight: '500',
+                                        fontSize: '13px',
+                                        color: '#6b7280',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.5px'
+                                    }}>
+                                        Translation · {getLanguageName(targetLang)}
+                                    </div>
+                                    <div style={{
+                                        padding: '24px',
+                                        backgroundColor: 'white',
+                                        border: '1px solid #e5e7eb',
+                                        borderRadius: '0 0 10px 10px',
+                                        minHeight: '200px',
+                                        maxHeight: '500px',
+                                        overflowY: 'auto',
+                                        whiteSpace: 'pre-wrap',
+                                        fontSize: '15px',
+                                        lineHeight: '1.7',
+                                        color: '#1a1a1a',
+                                        fontWeight: '400'
+                                    }}>
+                                        {result.translatedText}
                                     </div>
                                 </div>
                             )}
                         </div>
                     )}
+                </div>
+
+                {/* Disclaimer Text */}
+                <div style={{
+                    textAlign: 'left',
+                    marginTop: '24px',
+                    color: '#9ca3af',
+                    fontSize: '13px',
+                    fontWeight: '400'
+                }}>
+                    <b>Disclaimer:</b> Automated translations may contain inaccuracies. Please verify critical information with the original or an authorized source.
                 </div>
             </div>
         </div>
